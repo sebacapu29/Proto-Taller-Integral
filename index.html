@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>LAST LIGHT</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="toosmall">
+  LA PANTALLA ES DEMASIADO PEQUEÑA<br>PARA JUGAR “LAST LIGHT”.<br><br>
+  Agrandá la ventana del navegador.
+</div>
+<div id="app">
+  <div id="stage">
+    <canvas id="game"></canvas>
+
+    <!-- MENU -->
+    <div id="screen-menu" class="screen">
+      <h1 class="title">LAST LIGHT</h1>
+      <p class="subtitle">No te detengas</p>
+      <div class="menu-buttons">
+        <button class="btn" id="btn-start">INICIAR NUEVO JUEGO</button>
+        <button class="btn" id="btn-instructions">INSTRUCCIONES</button>
+        <div class="row">
+          <button class="btn small" id="btn-mute">SONIDO: ACTIVADO</button>
+          <button class="btn small" id="btn-fullscreen">PANTALLA COMPLETA</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- INSTRUCTIONS -->
+    <div id="screen-instructions" class="screen hidden">
+      <h1 class="title" style="font-size:clamp(20px,4vw,32px);letter-spacing:5px;">INSTRUCCIONES</h1>
+      <div class="instr-list">
+        <div><span class="key">→</span> avanzar (marcha NORMAL)</div>
+        <div><span class="key">←</span> retroceder (maniobra / reintentar)</div>
+        <div><span class="key">SHIFT</span> + → para TURBO (más rápido, gasta más combustible)</div>
+        <div><span class="key">W / ↑ / ESPACIO</span> saltar / tomar rampa</div>
+        <div><span class="key">F</span> encender / apagar el faro</div>
+        <div><span class="key">E</span> activar mecanismo cercano</div>
+        <div><span class="key">ESC / P</span> pausar</div>
+        <div><span class="key">R</span> reintentar tras perder</div>
+      </div>
+      <p style="max-width:520px;font-size:12px;color:var(--text-dim);letter-spacing:1px;">
+        Si no presionás ninguna flecha, la motoneta se detiene y la horda gana
+        terreno. Mantené SHIFT + → para pasar a TURBO y ganarle distancia,
+        pero administrá bien el combustible: sin él, quedás a los tumbos y la
+        horda te alcanza rápido.
+      </p>
+      <div class="menu-buttons">
+        <button class="btn" id="btn-instr-back">VOLVER</button>
+      </div>
+    </div>
+
+    <!-- PAUSE -->
+    <div id="screen-pause" class="screen hidden">
+      <h1 class="title" style="font-size:clamp(22px,4vw,36px);">PAUSA</h1>
+      <div class="menu-buttons">
+        <button class="btn" id="btn-resume">CONTINUAR</button>
+        <button class="btn" id="btn-pause-restart">REINICIAR (R)</button>
+        <button class="btn" id="btn-pause-menu">VOLVER AL MENÚ</button>
+      </div>
+    </div>
+
+    <!-- GAME OVER -->
+    <div id="screen-gameover" class="screen hidden">
+      <h1 class="title" style="color:var(--red);text-shadow:0 0 18px rgba(178,58,47,0.6);">ALCANZADO</h1>
+      <p class="subtitle" id="gameover-reason">LA HORDA TE ALCANZÓ</p>
+      <div class="menu-buttons">
+        <button class="btn" id="btn-gameover-restart">REINTENTAR (R)</button>
+        <button class="btn" id="btn-gameover-menu">VOLVER AL MENÚ</button>
+      </div>
+    </div>
+
+    <!-- VICTORY -->
+    <div id="screen-victory" class="screen hidden">
+      <h1 class="title" id="victory-title">PROTOTIPO COMPLETADO</h1>
+      <div class="stats" id="victory-stats"></div>
+      <div class="menu-buttons">
+        <button class="btn" id="btn-victory-restart">JUGAR DE NUEVO</button>
+        <button class="btn" id="btn-victory-menu">VOLVER AL MENÚ</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Sin build ni módulos ES: scripts clásicos cargados en orden de dependencia. -->
+<script src="js/config.js"></script>
+<script src="js/input.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/horde.js"></script>
+<script src="js/camera.js"></script>
+<script src="js/lighting.js"></script>
+<script src="js/vehicle.js"></script>
+<script src="js/level.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/game.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

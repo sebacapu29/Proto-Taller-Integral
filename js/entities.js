@@ -1,0 +1,105 @@
+"use strict";
+
+/* =========================================================================
+   Entity base
+   ========================================================================= */
+class Entity {
+  constructor(worldX, width, height) {
+    this.worldX = worldX;
+    this.width = width;
+    this.height = height;
+  }
+  screenX(camera) { return this.worldX - camera.x + camera.playerScreenX; }
+}
+
+/* =========================================================================
+   Collectible
+   ========================================================================= */
+class Collectible extends Entity {
+  constructor(worldX, type) {
+    super(worldX, 26, 26);
+    this.type = type; // 'fuel' | 'battery'
+    this.collected = false;
+    this.phase = Math.random() * Math.PI * 2;
+  }
+  reset() { this.collected = false; }
+}
+
+/* =========================================================================
+   Obstacle
+   ========================================================================= */
+class Obstacle extends Entity {
+  constructor(worldX, type) {
+    const sizes = {
+      vehicle: [110, 58], pit: [90, 20], barrier: [60, 46],
+      debris: [70, 34], log: [80, 26], slope: [100, 30]
+    };
+    const s = sizes[type] || [60, 40];
+    super(worldX, s[0], s[1]);
+    this.type = type;
+    this.resolved = false; // ya generó su efecto una vez
+  }
+  reset() { this.resolved = false; }
+}
+
+/* =========================================================================
+   Ramp
+   ========================================================================= */
+class Ramp extends Entity {
+  constructor(worldX, width) {
+    super(worldX, width || 220, 40);
+    this.used = false;
+  }
+  reset() { this.used = false; }
+}
+
+/* =========================================================================
+   Switch (interruptor de piso o elevado)
+   ========================================================================= */
+class SwitchEntity extends Entity {
+  constructor(worldX, opts) {
+    opts = opts || {};
+    super(worldX, opts.width || 30, opts.height || 40);
+    this.elevated = !!opts.elevated;
+    this.elevatedHeight = opts.elevatedHeight || 120; // altura sobre el suelo
+    this.activateByTouch = !!opts.activateByTouch;
+    this.activated = false;
+    this.linkedDoor = opts.linkedDoor || null;
+    this.onActivate = opts.onActivate || null;
+    this.radius = opts.radius || 90;
+  }
+  reset() { this.activated = false; }
+}
+
+/* =========================================================================
+   Door
+   ========================================================================= */
+class Door extends Entity {
+  constructor(worldX) {
+    super(worldX, 26, 130);
+    this.state = "CLOSED"; // CLOSED, OPENING, OPEN, CLOSING
+    this.openness = 0; // 0..1
+    this.openTimer = 0;
+    this.failedFlashTimer = 0;
+  }
+  reset() {
+    this.state = "CLOSED"; this.openness = 0; this.openTimer = 0; this.failedFlashTimer = 0;
+  }
+  trigger() {
+    if (this.state === "CLOSED") this.state = "OPENING";
+  }
+  update(dt) {
+    if (this.state === "OPENING") {
+      this.openness = Math.min(1, this.openness + dt * CONFIG.doorOpenSpeed);
+      if (this.openness >= 1) { this.state = "OPEN"; this.openTimer = CONFIG.doorOpenDuration; }
+    } else if (this.state === "OPEN") {
+      this.openTimer -= dt;
+      if (this.openTimer <= 0) this.state = "CLOSING";
+    } else if (this.state === "CLOSING") {
+      this.openness = Math.max(0, this.openness - dt * CONFIG.doorOpenSpeed);
+      if (this.openness <= 0) { this.state = "CLOSED"; this.openTimer = 0; }
+    }
+    if (this.failedFlashTimer > 0) this.failedFlashTimer -= dt;
+  }
+  isBlocking() { return this.openness < 0.65; }
+}

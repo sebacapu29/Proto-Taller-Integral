@@ -165,6 +165,7 @@ class Game {
     this.camera.playerScreenX = 0.30;
     this.camera.shakeTrauma = 0; this.camera.shakeX = 0; this.camera.shakeY = 0;
     this.player.scooter.update(dt, 1);
+    this.player.easeLane(dt);
     this.player.worldX = this.demoWorldX;
     this._updateDust(dt, 1);
   }
@@ -176,9 +177,17 @@ class Game {
     this.elapsedTime += dt;
     const p = this.player, lvl = this.level, sc = p.scooter;
 
-    // --- dirección (flechas) + marcha (normal/turbo) + combustible / stall ---
+    // --- dirección (flechas) + carril + marcha (normal/turbo) + combustible / stall ---
     const fwdHeld = this.input.isDown("forward"), backHeld = this.input.isDown("backward");
     p.moveDirection = fwdHeld === backHeld ? 0 : (fwdHeld ? 1 : -1); // se cancelan si se presionan ambas
+
+    // Cambio de carril (flecha arriba/abajo): independiente del avance y
+    // del salto. El carril lógico cambia al instante (colisión justa); la
+    // posición visual se desliza detrás vía easeLane.
+    if (this.input.justPressed("laneUp")) p.changeLane(-1);
+    if (this.input.justPressed("laneDown")) p.changeLane(1);
+    p.easeLane(dt);
+
     // El turbo requiere combustible disponible y sólo tiene sentido avanzando.
     const wasStalled = p.stalled;
     p.turboHeld = this.input.isDown("turbo") && p.fuel > 0 && p.moveDirection > 0;
@@ -212,9 +221,10 @@ class Game {
       if (p.battery <= 0) p.headlightOn = false;
     }
 
-    // --- salto / rampas ---
+    // --- salto / rampas (atadas al carril: sólo la rampa de tu carril activa) ---
     if (this.input.justPressed("jump")) {
-      const nearRamp = lvl.ramps.find(r => !r.used && p.worldX >= r.worldX - 40 && p.worldX <= r.worldX + r.width);
+      const nearRamp = lvl.ramps.find(r =>
+        !r.used && r.lane === p.lane && p.worldX >= r.worldX - 40 && p.worldX <= r.worldX + r.width);
       if (nearRamp) { sc.jump(true); nearRamp.used = true; }
       else sc.wheelie(); // fuera de una rampa, solo gesto cosmético (no esquiva obstáculos)
     }
@@ -224,9 +234,10 @@ class Game {
       this.audio.playLanding();
     }
 
-    // auto-lanzamiento suave al entrar en rampa (si no se saltó a mano)
+    // auto-lanzamiento suave al entrar en rampa de tu carril (si no se saltó a mano)
     for (const r of lvl.ramps) {
-      if (!r.used && sc.grounded && p.worldX >= r.worldX && p.worldX <= r.worldX + r.width * 0.4) {
+      if (!r.used && r.lane === p.lane && sc.grounded &&
+        p.worldX >= r.worldX && p.worldX <= r.worldX + r.width * 0.4) {
         sc.jump(false); r.used = true;
       }
     }
@@ -234,7 +245,7 @@ class Game {
     // --- faro toggle ---
     if (this.input.justPressed("light")) { p.toggleHeadlight(); }
 
-    // --- interacción E (interruptor de puerta, reintentable si falla) ---
+    // --- interacción E (interruptor de puerta, cualquier carril, reintentable si falla) ---
     this.contextHintVisible = false;
     const sw = lvl.groundSwitch;
     {
@@ -255,12 +266,13 @@ class Game {
       }
     }
 
-    // --- interruptor elevado (se activa al tocarlo en el aire) ---
+    // --- interruptor elevado (carril fijo; se activa al tocarlo en el aire) ---
     const esw = lvl.elevatedSwitch;
     if (!esw.activated) {
       const dx = Math.abs(p.worldX - esw.worldX);
       const airHeight = -sc.jumpOffset;
-      if (dx < esw.width && airHeight > esw.elevatedHeight - 60 && airHeight < esw.elevatedHeight + 90 && !sc.grounded) {
+      if (esw.lane === p.lane && dx < esw.width &&
+        airHeight > esw.elevatedHeight - 60 && airHeight < esw.elevatedHeight + 90 && !sc.grounded) {
         esw.activated = true;
         lvl.trapTriggered = true;
         this.audio.playSwitch();
@@ -289,11 +301,12 @@ class Game {
       if (sw.activated) { this.horde.relieve(CONFIG.hordeDoorPassRelief); this.ui.pushToast("PUERTA SUPERADA"); }
     }
 
-    // --- obstáculos (colisión suave AABB) ---
+    // --- obstáculos (colisión suave AABB, sólo si comparten carril) ---
     for (const o of lvl.obstacles) {
       if (o.resolved) continue;
       const dx = Math.abs(p.worldX - o.worldX);
       if (dx < (o.width / 2 + 26)) {
+        if (o.lane !== p.lane) { o.resolved = true; continue; } // otro carril: ni pasa cerca
         const airborne = -sc.jumpOffset > CONFIG.jumpClearHeight;
         if (!airborne) {
           o.resolved = true;
@@ -306,12 +319,18 @@ class Game {
             this.ui.pushToast("¡IMPACTO!");
           }
         } else {
-          o.resolved = true; // esquivado
+          o.resolved = true; // esquivado por altura (rampa)
         }
       }
     }
 
     // --- coleccionables ---
+    // A diferencia de los obstáculos, no están atados al carril: son
+    // recursos, no el desafío del carril. Si dependieran del carril
+    // exacto, esquivar un obstáculo cercano podría hacer perder un
+    // bidón sin que el jugador lo note, socavando el balance de
+    // combustible del nivel. Se recogen por pasar cerca en X, sin
+    // importar en qué carril se está.
     const tryCollect = (list, apply, label) => {
       for (const c of list) {
         if (c.collected) continue;
@@ -389,10 +408,12 @@ class Game {
   }
 
   _spawnHitParticles() {
+    const h = this.canvas.height, scale = h / 540;
+    const y = this._laneY(h, this.player.laneFloat) - 8 * scale;
     for (let i = 0; i < 14; i++) {
       this.hitParticles.push({
         x: this.camera.playerScreenX * this.canvas.width,
-        y: this.canvas.height * 0.68,
+        y,
         vx: Util.rand(-90, 140), vy: Util.rand(-160, -20),
         life: Util.rand(0.3, 0.7), maxLife: 0.7
       });
@@ -405,11 +426,13 @@ class Game {
     this.hitParticles = this.hitParticles.filter(pt => pt.life > 0);
   }
   _updateDust(dt, speedRatio) {
-    if (Math.random() < 0.6 * speedRatio) {
+    const intensity = Math.abs(speedRatio);
+    if (Math.random() < 0.6 * intensity) {
+      const h = this.canvas.height, scale = h / 540;
       this.dustParticles.push({
         x: this.camera.playerScreenX * this.canvas.width - 30,
-        y: this.canvas.height * 0.735,
-        vx: Util.rand(-60, -20) * speedRatio - 20, vy: Util.rand(-14, 4),
+        y: this._laneY(h, this.player.laneFloat) + 8 * scale,
+        vx: Util.rand(-60, -20) * intensity - 20, vy: Util.rand(-14, 4),
         life: Util.rand(0.4, 0.9), maxLife: 0.9, size: Util.rand(2, 5)
       });
     }
@@ -417,21 +440,33 @@ class Game {
     this.dustParticles = this.dustParticles.filter(d => d.life > 0);
   }
 
+  /* ======================= CARRILES ======================= */
+  // Y en pantalla del carril `laneValue` (puede ser fraccional, para la
+  // posición visual en transición). 0 = carril superior.
+  _laneY(h, laneValue) {
+    const scale = h / 540;
+    const spacing = CONFIG.laneSpacing * scale;
+    const mid = (CONFIG.laneCount - 1) / 2;
+    return h * 0.70 + (laneValue - mid) * spacing;
+  }
+  _trackTopY(h) { return this._laneY(h, 0) - 70 * (h / 540); }
+
   /* ======================= RENDER ======================= */
   _render() {
     const ctx = this.ctx, w = this.canvas.width, h = this.canvas.height;
+    const scale = h / 540;
     ctx.save();
     ctx.translate(this.camera.shakeX, this.camera.shakeY);
 
     this._renderSky(ctx, w, h);
-    this._renderParallaxLayer(ctx, w, h, LAYERS.far, 0.25, "#11141a", h * 0.62);
-    this._renderParallaxLayer(ctx, w, h, LAYERS.mid, 0.5, "#1a1d22", h * 0.70);
+    this._renderParallaxLayer(ctx, w, h, LAYERS.far, 0.25, "#11141a", this._trackTopY(h) - 40 * scale);
+    this._renderParallaxLayer(ctx, w, h, LAYERS.mid, 0.5, "#1a1d22", this._trackTopY(h) + 10 * scale);
     this._renderRoad(ctx, w, h);
     this._renderLevelEntities(ctx, w, h);
     // La capa cercana (árboles/postes de borde de ruta) va detrás de la
     // horda: la horda es la amenaza en primer plano y no debe camuflarse
     // contra el follaje al acercarse.
-    this._renderParallaxLayer(ctx, w, h, LAYERS.near, 0.85, "#05070a", h * 0.78);
+    this._renderParallaxLayer(ctx, w, h, LAYERS.near, 0.85, "#05070a", this._laneY(h, CONFIG.laneCount - 1) + 60 * scale);
     this._renderHorde(ctx, w, h);
     this._renderScooter(ctx, w, h);
     this._renderDust(ctx);
@@ -443,7 +478,7 @@ class Game {
     if (this.state === STATE.PLAYING || this.state === STATE.PAUSED) {
       const p = this.player;
       const headX = this.camera.playerScreenX * w + 34 + this.camera.shakeX;
-      const headY = h * 0.635 + p.scooter.jumpOffset * 0.5 + this.camera.shakeY;
+      const headY = this._laneY(h, p.laneFloat) - 68 * scale + p.scooter.jumpOffset * 0.5 + this.camera.shakeY;
       const darkness = this.lighting.darknessAtProgress(p.worldX);
       const unstable = this.lighting.isUnstableZone(p.worldX);
       this.lighting.render(ctx, w, h, {
@@ -519,20 +554,23 @@ class Game {
   }
 
   _renderRoad(ctx, w, h) {
-    const groundY = h * 0.76;
+    const topY = this._trackTopY(h);
     ctx.fillStyle = "#14161a";
-    ctx.fillRect(0, groundY, w, h - groundY);
+    ctx.fillRect(0, topY, w, h - topY);
     ctx.fillStyle = "rgba(0,0,0,0.35)";
-    ctx.fillRect(0, groundY, w, 6);
-    // líneas de carretera
-    ctx.strokeStyle = "rgba(180,170,150,0.25)";
-    ctx.lineWidth = 3;
-    ctx.setLineDash([28, 26]);
-    const off = -(this.camera.x % 54);
-    ctx.beginPath();
-    ctx.moveTo(off, groundY + (h - groundY) * 0.4);
-    ctx.lineTo(w, groundY + (h - groundY) * 0.4);
-    ctx.stroke();
+    ctx.fillRect(0, topY, w, 6);
+    // separadores entre carriles (una línea punteada por cada borde entre dos carriles)
+    ctx.strokeStyle = "rgba(180,170,150,0.22)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([24, 22]);
+    const off = -(this.camera.x % 46);
+    for (let i = 0; i < CONFIG.laneCount - 1; i++) {
+      const y = (this._laneY(h, i) + this._laneY(h, i + 1)) / 2;
+      ctx.beginPath();
+      ctx.moveTo(off, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
     ctx.setLineDash([]);
   }
 
@@ -540,18 +578,19 @@ class Game {
 
   _renderLevelEntities(ctx, w, h) {
     if (this.state !== STATE.PLAYING && this.state !== STATE.PAUSED) return;
-    const lvl = this.level, groundY = h * 0.76;
+    const lvl = this.level;
     const scale = h / 540;
 
     // Ramps
     for (const r of lvl.ramps) {
       const sx = this._worldToScreen(r.worldX, w);
       if (sx < -260 || sx > w + 60) continue;
+      const gy = this._laneY(h, r.lane);
       ctx.fillStyle = "#2a2620";
       ctx.beginPath();
-      ctx.moveTo(sx, groundY);
-      ctx.lineTo(sx + r.width, groundY - 46 * scale);
-      ctx.lineTo(sx + r.width, groundY);
+      ctx.moveTo(sx, gy);
+      ctx.lineTo(sx + r.width, gy - 46 * scale);
+      ctx.lineTo(sx + r.width, gy);
       ctx.closePath(); ctx.fill();
       ctx.strokeStyle = "rgba(226,162,68,0.3)"; ctx.stroke();
     }
@@ -560,19 +599,20 @@ class Game {
     for (const o of lvl.obstacles) {
       const sx = this._worldToScreen(o.worldX, w);
       if (sx < -150 || sx > w + 150) continue;
-      this._drawObstacle(ctx, o, sx, groundY, scale);
+      this._drawObstacle(ctx, o, sx, this._laneY(h, o.lane), scale);
     }
 
     // Ground switch
-    this._drawSwitch(ctx, lvl.groundSwitch, groundY, w, scale, false);
+    this._drawSwitch(ctx, lvl.groundSwitch, h, w, scale, false);
     // Elevated switch
-    this._drawSwitch(ctx, lvl.elevatedSwitch, groundY, w, scale, true);
+    this._drawSwitch(ctx, lvl.elevatedSwitch, h, w, scale, true);
 
-    // Door
-    this._drawDoor(ctx, lvl.door, groundY, w, scale);
+    // Door (ancho completo, abarca los tres carriles)
+    this._drawDoor(ctx, lvl.door, h, w, scale);
 
     // Collectibles
-    [...lvl.fuelPickups, ...lvl.batteryPickups].forEach(c => this._drawCollectible(ctx, c, groundY, w, scale));
+    [...lvl.fuelPickups, ...lvl.batteryPickups].forEach(c =>
+      this._drawCollectible(ctx, c, this._laneY(h, c.lane), w, scale));
   }
 
   _drawObstacle(ctx, o, sx, groundY, scale) {
@@ -615,11 +655,14 @@ class Game {
     }
   }
 
-  _drawSwitch(ctx, sw, groundY, w, scale, elevated) {
+  _drawSwitch(ctx, sw, h, w, scale, elevated) {
     const sx = this._worldToScreen(sw.worldX, w);
     if (sx < -100 || sx > w + 100) return;
-    const baseY = groundY;
-    const y = elevated ? baseY - sw.elevatedHeight : baseY;
+    // Sin carril propio (interruptor de piso): se dibuja en el carril
+    // central, ya que se puede activar desde cualquiera.
+    const laneVal = sw.lane === null ? (CONFIG.laneCount - 1) / 2 : sw.lane;
+    const baseY = this._laneY(h, laneVal);
+    const y = elevated ? baseY - sw.elevatedHeight * scale : baseY;
     if (elevated) {
       ctx.strokeStyle = "#232323"; ctx.lineWidth = 6;
       ctx.beginPath(); ctx.moveTo(sx, baseY); ctx.lineTo(sx, y); ctx.stroke();
@@ -630,15 +673,17 @@ class Game {
     ctx.fillStyle = "#111"; ctx.fillRect(sx - 8, y - 4, 16, 14);
   }
 
-  _drawDoor(ctx, door, groundY, w, scale) {
+  _drawDoor(ctx, door, h, w, scale) {
     const sx = this._worldToScreen(door.worldX, w);
     if (sx < -80 || sx > w + 80) return;
-    const fullH = door.height * scale;
+    const topY = this._laneY(h, 0) - 34 * scale;
+    const bottomY = this._laneY(h, CONFIG.laneCount - 1) + 20 * scale;
+    const fullH = bottomY - topY;
     const remainH = fullH * (1 - door.openness);
     ctx.fillStyle = "#26221c";
-    ctx.fillRect(sx - 5, groundY - fullH, 10, fullH); // marco fijo (leve)
+    ctx.fillRect(sx - 5, topY, 10, fullH); // marco fijo, abarca los tres carriles
     ctx.fillStyle = "#3a3428";
-    ctx.fillRect(sx - 13, groundY - remainH, 26, remainH);
+    ctx.fillRect(sx - 13, bottomY - remainH, 26, remainH); // el panel se hunde al abrir
     // luz de estado
     let color = "#b23a2f";
     if (door.state === "OPENING") color = "#e2b544";
@@ -646,10 +691,10 @@ class Game {
       color = door.openTimer < CONFIG.doorCloseWarn && Math.floor(this.elapsedTime * 8) % 2 === 0 ? "#e2b544" : "#5c8a4a";
     } else if (door.state === "CLOSING") color = "#e2b544";
     ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(sx, groundY - fullH - 14, 6 * scale, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx, topY - 14, 6 * scale, 0, Math.PI * 2); ctx.fill();
     if (door.failedFlashTimer > 0) {
       ctx.fillStyle = `rgba(178,58,47,${door.failedFlashTimer})`;
-      ctx.fillRect(sx - 30, groundY - fullH - 10, 60, fullH + 10);
+      ctx.fillRect(sx - 30, topY - 10, 60, fullH + 10);
     }
   }
 
@@ -677,7 +722,11 @@ class Game {
   }
 
   _renderHorde(ctx, w, h) {
-    const groundY = h * 0.76;
+    const scale = h / 540;
+    // La horda ocupa la banda completa de carriles (amenaza a lo ancho de
+    // toda la pista, no sólo al carril del jugador).
+    const topY = this._laneY(h, 0) - 24 * scale;
+    const bottomY = this._laneY(h, CONFIG.laneCount - 1) + 30 * scale;
     const prox = this.state === STATE.PLAYING || this.state === STATE.PAUSED ? this.horde.proximity01() : 0.35;
     // El rango horizontal y la opacidad están atados fuerte a la proximidad
     // (que a su vez depende pura y directamente de horde.distance): cuando
@@ -695,16 +744,16 @@ class Game {
       const px = baseX - (s.ox % spread);
       if (px < -100 || px > w * 0.6) continue;
       const bob = Math.sin(performance.now() * 0.003 * s.speed + s.phase) * 3;
-      const scale = s.scale * (0.7 + prox * 0.6);
-      const py = groundY - 6 - s.oy * 0.3 + bob;
+      const scaleS = s.scale * (0.7 + prox * 0.6);
+      const py = Util.lerp(topY, bottomY, s.oy / 30) + bob;
       // Tono ligeramente cálido/rojizo (vs. el negro-azulado del entorno)
       // para que la horda se lea como amenaza y no se camufle contra el paisaje.
       ctx.fillStyle = `rgba(${18 + prox * 22},${6 + prox * 4},${6 + prox * 4},${(0.6 + prox * 0.4) * visibility})`;
-      ctx.beginPath(); ctx.arc(px, py - 26 * scale, 7 * scale, 0, Math.PI * 2); ctx.fill();
-      ctx.fillRect(px - 6 * scale, py - 20 * scale, 12 * scale, 22 * scale);
-      const armSwing = Math.sin(performance.now() * 0.006 * s.speed + s.armPhase) * 10 * scale;
-      ctx.fillRect(px - 6 * scale - 8, py - 16 * scale + armSwing, 8, 3 * scale);
-      ctx.fillRect(px + 6 * scale, py - 16 * scale - armSwing, 8, 3 * scale);
+      ctx.beginPath(); ctx.arc(px, py - 26 * scaleS, 7 * scaleS, 0, Math.PI * 2); ctx.fill();
+      ctx.fillRect(px - 6 * scaleS, py - 20 * scaleS, 12 * scaleS, 22 * scaleS);
+      const armSwing = Math.sin(performance.now() * 0.006 * s.speed + s.armPhase) * 10 * scaleS;
+      ctx.fillRect(px - 6 * scaleS - 8, py - 16 * scaleS + armSwing, 8, 3 * scaleS);
+      ctx.fillRect(px + 6 * scaleS, py - 16 * scaleS - armSwing, 8, 3 * scaleS);
     }
     ctx.restore();
 
@@ -712,16 +761,17 @@ class Game {
       ctx.save();
       ctx.fillStyle = `rgba(10,10,10,${(prox - 0.75) * 4})`;
       const handX = this.camera.playerScreenX * w - 42;
-      ctx.beginPath(); ctx.ellipse(handX, groundY - 8, 10, 5, 0, 0, Math.PI * 2); ctx.fill();
+      const handY = this._laneY(h, this.player.laneFloat) - 8 * scale;
+      ctx.beginPath(); ctx.ellipse(handX, handY, 10, 5, 0, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
   }
 
   _renderScooter(ctx, w, h) {
-    const groundY = h * 0.76;
     const scale = h / 540;
     const p = this.player, sc = p.scooter;
     const sx = this.camera.playerScreenX * w;
+    const groundY = this._laneY(h, p.laneFloat);
     const jumpY = sc.jumpOffset;
     const susp = sc.suspension * 0.4;
     const flicker = p.invulnTimer > 0 && Math.floor(this.elapsedTime * 20) % 2 === 0;

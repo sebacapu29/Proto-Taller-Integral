@@ -4,6 +4,16 @@
    CONFIG - parámetros ajustables centralizados
    ========================================================================= */
 const CONFIG = {
+  // Carriles (vista tipo Excitebike): la pista tiene varias líneas
+  // paralelas y el jugador cambia entre ellas con flecha arriba/abajo,
+  // independientemente del salto (W / Espacio) y del avance (flecha
+  // derecha/izquierda). Obstáculos, rampas, ítems y el interruptor
+  // elevado viven en un carril puntual; la puerta y el interruptor de
+  // piso abarcan los tres.
+  laneCount: 3,
+  laneSpacing: 58,          // separación vertical entre carriles (unidades base, se escala con la pantalla)
+  laneChangeSpeed: 13,      // suavizado del desplazamiento visual entre carriles (mayor = más rápido)
+
   // Movimiento: flecha derecha avanza, flecha izquierda retrocede; con SHIFT
   // (avanzando) se pasa a Turbo. Normal es económica; Turbo gana distancia
   // rápido pero drena combustible; retroceder es una maniobra táctica
@@ -19,7 +29,7 @@ const CONFIG = {
   // Recursos
   fuelMax: 100,
   fuelConsumptionRate: 1.55,  // por segundo, a marcha normal
-  fuelPickupAmount: 34,
+  fuelPickupAmount: 38,
   batteryMax: 100,
   batteryDrainRate: 9,        // por segundo con faro encendido
   batteryPickupAmount: 38,
@@ -50,7 +60,6 @@ const CONFIG = {
   hordeTrapSlowBonus: -200,      // frenado de la horda al activar la trampa ambiental
   hordeHitPenalty: 70,
   hordeDoorFailPenalty: 90,
-  hordeMissPuzzlePenalty: 55,
   hordeSuccessRelief: 60,
   hordeDoorPassRelief: 90,
   hordeTrapRelief: 130,

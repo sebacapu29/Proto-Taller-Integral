@@ -76,6 +76,11 @@ class Player {
     this.stalled = false;
     this.turboHeld = false;
     this.moveDirection = 0; // -1 retrocede, 0 detenida, 1 avanza (flechas izq/der)
+    // Carril: cambia al instante (para que la colisión sea justa y
+    // predecible); laneFloat es sólo la posición visual, que se desliza
+    // detrás con una animación suave (ver easeLane).
+    this.lane = Math.floor(CONFIG.laneCount / 2); // arranca en el carril central
+    this.laneFloat = this.lane;
     this.rampBoostWindow = 0;
     this.onRamp = null;
     this.facing = 1;
@@ -91,9 +96,18 @@ class Player {
     this.stalled = false;
     this.turboHeld = false;
     this.moveDirection = 0;
+    this.lane = Math.floor(CONFIG.laneCount / 2);
+    this.laneFloat = this.lane;
     this.rampBoostWindow = 0;
     this.onRamp = null;
     this.finished = false;
+  }
+  changeLane(delta) {
+    this.lane = Util.clamp(this.lane + delta, 0, CONFIG.laneCount - 1);
+  }
+  // Se llama una vez por frame: la posición visual persigue al carril lógico.
+  easeLane(dt) {
+    this.laneFloat = Util.lerp(this.laneFloat, this.lane, Math.min(1, dt * CONFIG.laneChangeSpeed));
   }
   // Velocidad real de avance (px/seg, con signo): positiva al avanzar,
   // negativa al retroceder, 0 si no se presiona ninguna flecha. El turbo

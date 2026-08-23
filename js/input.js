@@ -14,7 +14,11 @@ class InputManager {
     window.addEventListener("keyup", this.onKeyUp);
   }
   normalize(e) {
-    if (e.code === "ArrowUp" || e.code === "Space" || e.code === "KeyW") return "jump";
+    // El salto vive sólo en W/Espacio: flecha arriba/abajo quedan
+    // dedicadas por completo a cambiar de carril.
+    if (e.code === "Space" || e.code === "KeyW") return "jump";
+    if (e.code === "ArrowUp") return "laneUp";
+    if (e.code === "ArrowDown") return "laneDown";
     if (e.code === "ArrowRight") return "forward";
     if (e.code === "ArrowLeft") return "backward";
     if (e.code === "KeyF") return "light";
@@ -28,7 +32,8 @@ class InputManager {
     const k = this.normalize(e);
     if (!k) return;
     // evita scroll/navegación accidental de página
-    if (e.code === "Space" || e.code === "ArrowUp" || e.code === "ArrowLeft" || e.code === "ArrowRight") e.preventDefault();
+    if (e.code === "Space" || e.code === "ArrowUp" || e.code === "ArrowDown" ||
+        e.code === "ArrowLeft" || e.code === "ArrowRight") e.preventDefault();
     if (!this.down[k]) this._pending.push(k);
     this.down[k] = true;
   }

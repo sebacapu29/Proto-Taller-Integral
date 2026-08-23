@@ -58,6 +58,21 @@ class UI {
       14, 82
     );
 
+    // Carril actual (↑/↓)
+    const laneSize = 9, laneGap = 5;
+    const laneTotalH = CONFIG.laneCount * laneSize + (CONFIG.laneCount - 1) * laneGap;
+    const laneX = 14, laneY0 = 96;
+    for (let i = 0; i < CONFIG.laneCount; i++) {
+      const ly = laneY0 + i * (laneSize + laneGap);
+      ctx.fillStyle = i === p.lane ? "#e2a244" : "rgba(138,132,120,0.4)";
+      ctx.fillRect(laneX, ly, laneSize, laneSize);
+    }
+    ctx.fillStyle = "#7a746a";
+    ctx.font = "10px Consolas, monospace";
+    ctx.textBaseline = "middle";
+    ctx.fillText("CARRIL [↑ ↓]", laneX + laneSize + 8, laneY0 + laneTotalH / 2);
+    ctx.textBaseline = "alphabetic";
+
     // Horda distancia
     const prox = game.horde.proximity01();
     ctx.fillStyle = prox > 0.7 ? "#e05a4a" : "#c8c2b4";

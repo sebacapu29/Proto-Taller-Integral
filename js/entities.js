@@ -4,10 +4,13 @@
    Entity base
    ========================================================================= */
 class Entity {
-  constructor(worldX, width, height) {
+  // lane: null = independiente del carril (afecta/es visible en los tres);
+  // un número (0..CONFIG.laneCount-1) ata la entidad a un carril puntual.
+  constructor(worldX, width, height, lane) {
     this.worldX = worldX;
     this.width = width;
     this.height = height;
+    this.lane = (lane === undefined) ? null : lane;
   }
   screenX(camera) { return this.worldX - camera.x + camera.playerScreenX; }
 }
@@ -16,8 +19,8 @@ class Entity {
    Collectible
    ========================================================================= */
 class Collectible extends Entity {
-  constructor(worldX, type) {
-    super(worldX, 26, 26);
+  constructor(worldX, type, lane) {
+    super(worldX, 26, 26, lane);
     this.type = type; // 'fuel' | 'battery'
     this.collected = false;
     this.phase = Math.random() * Math.PI * 2;
@@ -29,13 +32,13 @@ class Collectible extends Entity {
    Obstacle
    ========================================================================= */
 class Obstacle extends Entity {
-  constructor(worldX, type) {
+  constructor(worldX, type, lane) {
     const sizes = {
       vehicle: [110, 58], pit: [90, 20], barrier: [60, 46],
       debris: [70, 34], log: [80, 26], slope: [100, 30]
     };
     const s = sizes[type] || [60, 40];
-    super(worldX, s[0], s[1]);
+    super(worldX, s[0], s[1], lane);
     this.type = type;
     this.resolved = false; // ya generó su efecto una vez
   }
@@ -46,8 +49,8 @@ class Obstacle extends Entity {
    Ramp
    ========================================================================= */
 class Ramp extends Entity {
-  constructor(worldX, width) {
-    super(worldX, width || 220, 40);
+  constructor(worldX, width, lane) {
+    super(worldX, width || 220, 40, lane);
     this.used = false;
   }
   reset() { this.used = false; }
@@ -59,7 +62,10 @@ class Ramp extends Entity {
 class SwitchEntity extends Entity {
   constructor(worldX, opts) {
     opts = opts || {};
-    super(worldX, opts.width || 30, opts.height || 40);
+    // opts.lane: si se omite queda null (interactuable desde cualquier
+    // carril); el interruptor de piso usa esto para seguir siendo
+    // reintentable sin exigir un carril exacto.
+    super(worldX, opts.width || 30, opts.height || 40, opts.lane);
     this.elevated = !!opts.elevated;
     this.elevatedHeight = opts.elevatedHeight || 120; // altura sobre el suelo
     this.activateByTouch = !!opts.activateByTouch;
@@ -72,11 +78,11 @@ class SwitchEntity extends Entity {
 }
 
 /* =========================================================================
-   Door
+   Door - siempre abarca los tres carriles (barrera de ancho completo)
    ========================================================================= */
 class Door extends Entity {
   constructor(worldX) {
-    super(worldX, 26, 130);
+    super(worldX, 26, 130, null);
     this.state = "CLOSED"; // CLOSED, OPENING, OPEN, CLOSING
     this.openness = 0; // 0..1
     this.openTimer = 0;

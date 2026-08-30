@@ -36,8 +36,20 @@ class Level {
       new Obstacle(0.365 * L, "vehicle", 2),
       new Obstacle(0.39 * L, "barrier", 0),
       new Obstacle(0.41 * L, "slope", 2),
+      // Densidad extra (playtesting: se sentía muy fácil) para que el tramo
+      // entre la rampa del interruptor elevado y la persecución final no
+      // quede vacío.
+      new Obstacle(0.485 * L, "pit", 2),
+      new Obstacle(0.50 * L, "vehicle", 1),
+      new Obstacle(0.53 * L, "barrier", 2),
+      new Obstacle(0.545 * L, "barrier", 0),
       new Obstacle(0.56 * L, "log", 1),
       new Obstacle(0.605 * L, "debris", 2),
+      new Obstacle(0.615 * L, "debris", 1),
+      new Obstacle(0.65 * L, "debris", 0),
+      new Obstacle(0.68 * L, "log", 2),
+      new Obstacle(0.70 * L, "log", 0),
+      new Obstacle(0.735 * L, "barrier", 1),
       // Persecución final: algunos tramos bloquean dos carriles a la vez,
       // dejando sólo uno libre - exige anticipar el carril correcto.
       new Obstacle(0.76 * L, "vehicle", 0),
@@ -48,12 +60,22 @@ class Level {
       new Obstacle(0.83 * L, "debris", 1),
       new Obstacle(0.86 * L, "vehicle", 1),
       new Obstacle(0.89 * L, "barrier", 0),
+      new Obstacle(0.905 * L, "vehicle", 1),
+      new Obstacle(0.93 * L, "debris", 0),
+      new Obstacle(0.96 * L, "vehicle", 2),
     ];
 
     this.ramps = [
       new Ramp(0.24 * L, 240, 1),   // rampa de práctica, carril central
       new Ramp(0.46 * L, 240, 0),   // rampa hacia el interruptor elevado, carril superior
     ];
+
+    // Zombis de frente: aparecen de a uno, en carriles que en ese punto no
+    // están ya bloqueados por un obstáculo (siempre queda otra vía además
+    // de dispararles), con densidad creciente hacia la persecución final.
+    this.frontZombies = [
+      [0.27, 0], [0.44, 2], [0.60, 1], [0.72, 0], [0.795, 0], [0.87, 2],
+    ].map(([p, lane]) => new FrontZombie(p * L, lane));
 
     this.door = new Door(0.322 * L); // barrera de ancho completo: bloquea los tres carriles
     this.groundSwitch = new SwitchEntity(0.300 * L, {
@@ -81,6 +103,7 @@ class Level {
       { x: 0.02 * L, text: "NO TE DETENGAS", duration: 2.6 },
       { x: 0.06 * L, text: "↑ / ↓ · CAMBIÁ DE CARRIL", duration: 2.8 },
       { x: 0.10 * L, text: "SE ACERCA LA OSCURIDAD · USÁ F", duration: 3 },
+      { x: 0.20 * L, text: "ZOMBI DE FRENTE · ESQUIVÁ O DISPARÁ CON D", duration: 3 },
       { x: 0.29 * L, text: "PRESIONÁ E EN EL INTERRUPTOR", duration: 3 },
       { x: 0.455 * L, text: "SALTÁ EN LA RAMPA (CARRIL SUPERIOR)", duration: 2.8 },
       { x: 0.55 * L, text: "TÚNEL INESTABLE", duration: 2.6 },
@@ -95,6 +118,7 @@ class Level {
     this.batteryPickups.forEach(c => c.reset());
     this.obstacles.forEach(o => o.reset());
     this.ramps.forEach(r => r.reset());
+    this.frontZombies.forEach(z => z.reset());
     this.door.reset();
     this.groundSwitch.reset();
     this.elevatedSwitch.reset();

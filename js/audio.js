@@ -107,4 +107,10 @@ class AudioManager {
   playBatteryAlert() { this._blip(220, 0.18, "square", 0.12, 180); }
   playDamage() { this._noise(0.25, 0.28); this._blip(90, 0.2, "sawtooth", 0.2, 40); }
   playLanding() { this._noise(0.15, 0.22); this._blip(70, 0.15, "sine", 0.18, 40); }
+  // Disparo hacia atrás: un poco más grave/percusivo (impacta y frena a la
+  // horda). Hacia adelante: más agudo/seco (sin efecto todavía).
+  playShot(back) {
+    if (back) this._blip(180, 0.09, "square", 0.13, 90);
+    else this._blip(340, 0.06, "square", 0.1, 500);
+  }
 }

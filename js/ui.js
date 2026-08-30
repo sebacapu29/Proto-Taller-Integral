@@ -15,6 +15,12 @@ class UI {
     this.toasts.forEach(t => t.life -= dt);
     this.toasts = this.toasts.filter(t => t.life > 0);
   }
+  // Rect (en espacio de canvas) de la barra de velocidad interactiva.
+  // Compartido entre el render (acá) y el hit-test del mouse (Game),
+  // para que ambos usen siempre el mismo layout.
+  speedSliderRect(w, h) {
+    return { x: 14, y: 120, width: 120, height: 12 };
+  }
   bar(ctx, x, y, w, h, pct, color, label) {
     ctx.fillStyle = "rgba(5,6,8,0.65)";
     ctx.fillRect(x, y, w, h);
@@ -34,34 +40,32 @@ class UI {
     ctx.save();
     ctx.textBaseline = "alphabetic";
 
-    // Combustible / batería
-    this.bar(ctx, 14, 14, 120, 12, p.fuel / CONFIG.fuelMax,
-      p.fuel < CONFIG.lowFuelThreshold ? "#b23a2f" : "#e2a244", "COMBUSTIBLE");
-    this.bar(ctx, 14, 34, 120, 12, p.battery / CONFIG.batteryMax,
+    // Batería (el combustible es ilimitado: no se muestra como recurso)
+    this.bar(ctx, 14, 14, 120, 12, p.battery / CONFIG.batteryMax,
       p.battery < CONFIG.lowBatteryThreshold ? "#b23a2f" : "#6f8fb2", "BATERÍA");
 
     // Faro estado
     ctx.font = "11px Consolas, monospace";
     ctx.fillStyle = p.headlightOn ? "#e2a244" : "#7a746a";
-    ctx.fillText("FARO: " + (p.headlightOn ? "ON" : "OFF") + "  [F]", 14, 66);
+    ctx.fillText("FARO: " + (p.headlightOn ? "ON" : "OFF") + "  [F]", 14, 46);
 
-    // Marcha (avanzando normal/turbo, retrocediendo, o detenida)
-    const turboActive = p.turboHeld && !p.stalled;
+    // Marcha (avanzando, retrocediendo, o detenida) — la velocidad de
+    // avance en sí la muestra la barra de velocidad, más abajo.
     let marchaLabel, marchaColor;
     if (p.moveDirection === 0) { marchaLabel = "DETENIDA"; marchaColor = "#b23a2f"; }
     else if (p.moveDirection < 0) { marchaLabel = "RETROCEDIENDO"; marchaColor = "#8a8478"; }
-    else if (p.stalled) { marchaLabel = "SIN COMBUSTIBLE"; marchaColor = "#b23a2f"; }
-    else { marchaLabel = turboActive ? "TURBO" : "NORMAL"; marchaColor = turboActive ? "#e2a244" : "#8a8478"; }
+    else { marchaLabel = "AVANZANDO"; marchaColor = "#8a8478"; }
+    // Tras un golpe la moto queda renga un rato (ver Player.applyHit):
+    // se marca en la propia etiqueta de marcha, no como un toast que
+    // desaparece antes de que termine la penalización.
+    if (p.speedPenaltyTimer > 0) { marchaLabel += " · RENGUEANDO"; marchaColor = "#b23a2f"; }
     ctx.fillStyle = marchaColor;
-    ctx.fillText(
-      "MARCHA: " + marchaLabel + "  [← → SHIFT]",
-      14, 82
-    );
+    ctx.fillText("MARCHA: " + marchaLabel + "  [← →]", 14, 62);
 
     // Carril actual (↑/↓)
     const laneSize = 9, laneGap = 5;
     const laneTotalH = CONFIG.laneCount * laneSize + (CONFIG.laneCount - 1) * laneGap;
-    const laneX = 14, laneY0 = 96;
+    const laneX = 14, laneY0 = 76;
     for (let i = 0; i < CONFIG.laneCount; i++) {
       const ly = laneY0 + i * (laneSize + laneGap);
       ctx.fillStyle = i === p.lane ? "#e2a244" : "rgba(138,132,120,0.4)";
@@ -72,6 +76,29 @@ class UI {
     ctx.textBaseline = "middle";
     ctx.fillText("CARRIL [↑ ↓]", laneX + laneSize + 8, laneY0 + laneTotalH / 2);
     ctx.textBaseline = "alphabetic";
+
+    // Barra de velocidad: slider clickeable/arrastrable con el mouse que
+    // regula la velocidad de avance entre Normal y Turbo.
+    {
+      const r = this.speedSliderRect(w, h);
+      ctx.fillStyle = "rgba(5,6,8,0.65)";
+      ctx.fillRect(r.x, r.y, r.width, r.height);
+      ctx.strokeStyle = "rgba(216,210,196,0.35)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.width, r.height);
+      const fillW = Math.max(0, (r.width - 4) * Util.clamp(p.speedSlider, 0, 1));
+      ctx.fillStyle = p.speedSlider > 0.5 ? "#e2a244" : "#6f8fb2";
+      ctx.fillRect(r.x + 2, r.y + 2, fillW, r.height - 4);
+      // manija
+      const handleX = r.x + 2 + fillW;
+      ctx.fillStyle = "#d8d2c4";
+      ctx.fillRect(Util.clamp(handleX - 1.5, r.x, r.x + r.width - 3), r.y - 2, 3, r.height + 4);
+      ctx.fillStyle = "rgba(216,210,196,0.85)";
+      ctx.font = "10px Consolas, monospace";
+      ctx.textBaseline = "middle";
+      ctx.fillText("VELOCIDAD " + Math.round(p.speedSlider * 100) + "%", r.x + r.width + 8, r.y + r.height / 2);
+      ctx.textBaseline = "alphabetic";
+    }
 
     // Horda distancia
     const prox = game.horde.proximity01();

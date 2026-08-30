@@ -34,11 +34,15 @@ class Lighting {
     this.flickerPhase += 0.016;
     const octx = this.octx;
     octx.clearRect(0, 0, w, h);
-    let alpha = 0.12 + darkness * 0.72;
+    // Ambiente más iluminado que el original: mismo perfil de progresión
+    // (más oscuro en el túnel, más claro al inicio), pero con menos opacidad
+    // general para que el entorno y la horda se distingan mejor entre sí.
+    // Bajado un escalón más tras playtesting (seguía costando ver la horda).
+    let alpha = 0.02 + darkness * 0.42;
     if (unstable) {
       alpha += Math.sin(this.flickerPhase * 27) * 0.05 + (Math.random() - 0.5) * 0.05;
     }
-    alpha = Util.clamp(alpha, 0.08, 0.94);
+    alpha = Util.clamp(alpha, 0.02, 0.68);
     octx.globalCompositeOperation = "source-over";
     octx.fillStyle = `rgba(3,4,10,${alpha})`;
     octx.fillRect(0, 0, w, h);

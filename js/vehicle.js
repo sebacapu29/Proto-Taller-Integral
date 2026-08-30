@@ -69,12 +69,17 @@ class Player {
   constructor() {
     this.scooter = new Scooter();
     this.worldX = 0;
-    this.fuel = CONFIG.fuelMax;
     this.battery = CONFIG.batteryMax;
     this.headlightOn = false;
     this.invulnTimer = 0;
-    this.stalled = false;
+    this.speedPenaltyTimer = 0; // >0 mientras la moto está renga tras un golpe (ver applyHit)
     this.turboHeld = false;
+    // Barra de velocidad del HUD (0 = Normal, 1 = Turbo), controlada con
+    // el mouse. Reemplaza al Shift como forma de regular la velocidad;
+    // turboHeld queda como bandera cosmética derivada (ver Game). Arranca
+    // a fondo (Turbo) para que la partida sea frenética desde el vamos;
+    // el jugador puede bajarla en cualquier momento si quiere administrarla.
+    this.speedSlider = 1;
     this.moveDirection = 0; // -1 retrocede, 0 detenida, 1 avanza (flechas izq/der)
     // Carril: cambia al instante (para que la colisión sea justa y
     // predecible); laneFloat es sólo la posición visual, que se desliza
@@ -85,22 +90,27 @@ class Player {
     this.onRamp = null;
     this.facing = 1;
     this.finished = false;
+    // Disparos: munición infinita, sólo limitados por un cooldown.
+    this.shootBackCooldown = 0;
+    this.shootForwardCooldown = 0;
   }
   reset() {
     this.scooter.reset();
     this.worldX = 0;
-    this.fuel = CONFIG.fuelMax;
     this.battery = CONFIG.batteryMax;
     this.headlightOn = false;
     this.invulnTimer = 0;
-    this.stalled = false;
+    this.speedPenaltyTimer = 0;
     this.turboHeld = false;
+    this.speedSlider = 1;
     this.moveDirection = 0;
     this.lane = Math.floor(CONFIG.laneCount / 2);
     this.laneFloat = this.lane;
     this.rampBoostWindow = 0;
     this.onRamp = null;
     this.finished = false;
+    this.shootBackCooldown = 0;
+    this.shootForwardCooldown = 0;
   }
   changeLane(delta) {
     this.lane = Util.clamp(this.lane + delta, 0, CONFIG.laneCount - 1);
@@ -110,15 +120,16 @@ class Player {
     this.laneFloat = Util.lerp(this.laneFloat, this.lane, Math.min(1, dt * CONFIG.laneChangeSpeed));
   }
   // Velocidad real de avance (px/seg, con signo): positiva al avanzar,
-  // negativa al retroceder, 0 si no se presiona ninguna flecha. El turbo
-  // sólo aplica al avance.
+  // negativa al retroceder, 0 si no se presiona ninguna flecha. La barra
+  // de velocidad (speedSlider) sólo aplica al avance, interpolando entre
+  // Normal y Turbo de forma continua. Si la moto quedó renga por un golpe
+  // reciente (speedPenaltyTimer > 0), todo lo anterior se escala igual,
+  // en cualquier dirección.
   getSpeed() {
     if (this.moveDirection === 0) return 0;
-    if (this.moveDirection < 0) {
-      return -CONFIG.scooterSpeedReverse * (this.stalled ? CONFIG.stallSpeedFactor : 1);
-    }
-    const forward = this.turboHeld ? CONFIG.scooterSpeedTurbo : CONFIG.scooterSpeedNormal;
-    return this.stalled ? forward * CONFIG.stallSpeedFactor : forward;
+    const penalty = this.speedPenaltyTimer > 0 ? CONFIG.hitSpeedPenaltyFactor : 1;
+    if (this.moveDirection < 0) return -CONFIG.scooterSpeedReverse * penalty;
+    return Util.lerp(CONFIG.scooterSpeedNormal, CONFIG.scooterSpeedTurbo, this.speedSlider) * penalty;
   }
   // Relación cosmética respecto de la marcha normal (con signo, para animaciones/sonido).
   get speedRatio() { return this.getSpeed() / CONFIG.scooterSpeedNormal; }
@@ -129,7 +140,7 @@ class Player {
   applyHit(hordePush) {
     if (this.invulnTimer > 0) return false;
     this.invulnTimer = 1.4;
-    this.fuel = Math.max(0, this.fuel - 8);
+    this.speedPenaltyTimer = CONFIG.hitSpeedPenaltyDuration;
     return true;
   }
 }

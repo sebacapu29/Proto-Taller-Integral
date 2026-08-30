@@ -25,8 +25,10 @@ class Game {
     this.gameoverReason = "";
     this.dustParticles = [];
     this.hitParticles = [];
+    this.bullets = [];
     this.demoWorldX = 0;
     this.trapReliefTimer = 0;
+    this._draggingSlider = false;
 
     this._bindUI();
     this._resize = this._resize.bind(this);
@@ -76,6 +78,10 @@ class Game {
     this.lighting.resize(w, h);
     document.getElementById("toosmall").style.display =
       (maxW < 380 || maxH < 260) ? "flex" : "none";
+    // Se cachea acá (en vez de leerlo cada frame en _updateSpeedSlider):
+    // getBoundingClientRect() fuerza un recálculo de layout, y llamarlo
+    // por frame es costo innecesario ya que sólo cambia con el resize.
+    this._canvasRect = this.canvas.getBoundingClientRect();
   }
 
   setState(s) {
@@ -99,9 +105,11 @@ class Game {
     this.elapsedTime = 0;
     this.dustParticles = [];
     this.hitParticles = [];
+    this.bullets = [];
     this.ui.toasts = [];
     this.trapReliefTimer = 0;
     this.contextHintVisible = false;
+    this._draggingSlider = false;
     this.setState(STATE.PLAYING);
   }
 
@@ -126,7 +134,6 @@ class Game {
     const mm = Math.floor(this.elapsedTime / 60), ss = Math.floor(this.elapsedTime % 60);
     stats.innerHTML =
       `TIEMPO: <b>${mm}:${ss.toString().padStart(2, "0")}</b><br>` +
-      `COMBUSTIBLE RESTANTE: <b>${Math.round(this.player.fuel)}%</b><br>` +
       `BATERÍA RESTANTE: <b>${Math.round(this.player.battery)}%</b>`;
     this.setState(STATE.VICTORY);
   }
@@ -177,7 +184,7 @@ class Game {
     this.elapsedTime += dt;
     const p = this.player, lvl = this.level, sc = p.scooter;
 
-    // --- dirección (flechas) + carril + marcha (normal/turbo) + combustible / stall ---
+    // --- dirección (flechas) + carril + marcha (normal/turbo) ---
     const fwdHeld = this.input.isDown("forward"), backHeld = this.input.isDown("backward");
     p.moveDirection = fwdHeld === backHeld ? 0 : (fwdHeld ? 1 : -1); // se cancelan si se presionan ambas
 
@@ -188,24 +195,12 @@ class Game {
     if (this.input.justPressed("laneDown")) p.changeLane(1);
     p.easeLane(dt);
 
-    // El turbo requiere combustible disponible y sólo tiene sentido avanzando.
-    const wasStalled = p.stalled;
-    p.turboHeld = this.input.isDown("turbo") && p.fuel > 0 && p.moveDirection > 0;
-    const isMoving = p.moveDirection !== 0;
-    const fuelDrain = isMoving ? CONFIG.fuelConsumptionRate * (p.turboHeld ? CONFIG.turboFuelMultiplier : 1) : 0;
-    p.fuel = Math.max(0, p.fuel - fuelDrain * dt);
-    p.stalled = p.fuel <= 0;
-    if (p.stalled) p.turboHeld = false;
-    if (!wasStalled && p.stalled) {
-      // Falla puntual y acotada (no una espiral): un golpe fijo a la
-      // distancia, no una velocidad de horda descontrolada.
-      this.horde.approach(CONFIG.hordeStallPenalty);
-      this.camera.addShake(0.4);
-      this.audio.playBatteryAlert();
-      this.ui.pushToast("SIN COMBUSTIBLE · LA HORDA GANA TERRENO", 2.2);
-    } else if (p.fuel > 0 && p.fuel < CONFIG.lowFuelThreshold) {
-      this.ui.pushToast("COMBUSTIBLE BAJO", 1.4);
-    }
+    // La velocidad de avance la regula la barra de velocidad del HUD
+    // (mouse), no el Shift. turboHeld queda como bandera cosmética
+    // derivada (audio del motor, etiqueta del HUD), no como disparador.
+    // El combustible es ilimitado: no hay drenaje ni estado "sin nafta".
+    this._updateSpeedSlider();
+    p.turboHeld = p.speedSlider > 0.5 && p.moveDirection > 0;
 
     // --- movimiento (avanzar/retroceder según flechas) ---
     // La puerta cerrada sólo bloquea el avance hacia ella, nunca retroceder.
@@ -213,6 +208,7 @@ class Game {
       Math.abs(p.worldX - lvl.door.worldX) < 18 && p.worldX < lvl.door.worldX;
     const rawSpeed = p.getSpeed();
     const advanceSpeed = (doorBlocking && rawSpeed > 0) ? 0 : rawSpeed;
+    const prevWorldX = p.worldX; // usado por el lanzamiento automático de rampas
     p.worldX = Math.max(0, p.worldX + advanceSpeed * dt);
 
     // --- faro / batería ---
@@ -234,16 +230,44 @@ class Game {
       this.audio.playLanding();
     }
 
-    // auto-lanzamiento suave al entrar en rampa de tu carril (si no se saltó a mano)
+    // Lanzamiento automático estilo Excitebike: pasar por una rampa de tu
+    // carril siempre te hace saltar, sin depender de apretar nada. Se
+    // dispara si el jugador cruza el inicio de la rampa en este mismo
+    // frame (robusto ante avances grandes que podrían saltarse una
+    // ventana angosta) o si ya estaba dentro del primer tramo de la
+    // rampa al cambiar hacia ese carril.
     for (const r of lvl.ramps) {
-      if (!r.used && r.lane === p.lane && sc.grounded &&
-        p.worldX >= r.worldX && p.worldX <= r.worldX + r.width * 0.4) {
-        sc.jump(false); r.used = true;
-      }
+      if (r.used || r.lane !== p.lane || !sc.grounded) continue;
+      const crossedStart = prevWorldX < r.worldX && p.worldX >= r.worldX;
+      const withinEntry = p.worldX >= r.worldX && p.worldX <= r.worldX + r.width * 0.4;
+      if (crossedStart || withinEntry) { sc.jump(false); r.used = true; }
     }
 
     // --- faro toggle ---
     if (this.input.justPressed("light")) { p.toggleHeadlight(); }
+
+    // --- disparos (munición infinita, limitados por cooldown; A = atrás, D = adelante) ---
+    if (p.shootBackCooldown > 0) p.shootBackCooldown -= dt;
+    if (p.shootForwardCooldown > 0) p.shootForwardCooldown -= dt;
+    if (this.input.isDown("shootBack") && p.shootBackCooldown <= 0) {
+      p.shootBackCooldown = CONFIG.shotCooldown;
+      this._spawnBullet(-1);
+      // Frena a la horda: alivio puntual y acotado, repetible mientras se
+      // sostenga el disparo (igual patrón que los demás eventos de alivio).
+      // El margen de Turbo es ahora muy ajustado (ver CONFIG.hordeBaseSpeed),
+      // así que esto debe sentirse: shake más marcado y una confirmación en
+      // el HUD, no sólo el número de distancia moviéndose de fondo.
+      this.horde.relieve(CONFIG.hordeShotRelief);
+      this.camera.addShake(0.18);
+      this.audio.playShot(true);
+      this.ui.pushToast("LA HORDA SE FRENA", 0.5);
+    }
+    if (this.input.isDown("shootForward") && p.shootForwardCooldown <= 0) {
+      p.shootForwardCooldown = CONFIG.shotCooldown;
+      this._spawnBullet(1); // puede eliminar un zombi de frente (ver _updateFrontZombies)
+      this.audio.playShot(false);
+    }
+    this._updateBullets(dt);
 
     // --- interacción E (interruptor de puerta, cualquier carril, reintentable si falla) ---
     this.contextHintVisible = false;
@@ -324,6 +348,9 @@ class Game {
       }
     }
 
+    // --- zombis de frente ---
+    this._updateFrontZombies(dt);
+
     // --- coleccionables ---
     // A diferencia de los obstáculos, no están atados al carril: son
     // recursos, no el desafío del carril. Si dependieran del carril
@@ -343,7 +370,7 @@ class Game {
         }
       }
     };
-    tryCollect(lvl.fuelPickups, () => { p.fuel = Math.min(CONFIG.fuelMax, p.fuel + CONFIG.fuelPickupAmount); }, "+ COMBUSTIBLE");
+    tryCollect(lvl.fuelPickups, () => {}, "+ COMBUSTIBLE"); // combustible ilimitado: el bidón sólo da el alivio de horda
     tryCollect(lvl.batteryPickups, () => { p.battery = Math.min(CONFIG.batteryMax, p.battery + CONFIG.batteryPickupAmount); }, "+ BATERÍA");
 
     // --- horda: velocidad relativa + presión guionada ---
@@ -358,7 +385,6 @@ class Game {
     let targetSpeedBonus = 0;
     if (inApproachZone) targetSpeedBonus = CONFIG.hordeApproachZoneBonus;
     if (inFinalChase) targetSpeedBonus = CONFIG.hordeFinalChaseZoneBonus;
-    if (p.stalled) targetSpeedBonus = CONFIG.hordeStallSpeedBonus;
     if (this.trapReliefTimer > 0) targetSpeedBonus = CONFIG.hordeTrapSlowBonus;
     this.horde.speedBonus = Util.lerp(this.horde.speedBonus, targetSpeedBonus, dt * 1.5);
 
@@ -366,6 +392,7 @@ class Game {
     this.horde.update(dt, advanceSpeed, progress01);
 
     if (p.invulnTimer > 0) p.invulnTimer -= dt;
+    if (p.speedPenaltyTimer > 0) p.speedPenaltyTimer -= dt;
 
     // --- mensajes contextuales del nivel ---
     for (const m of lvl.messages) {
@@ -407,12 +434,102 @@ class Game {
     }
   }
 
-  _spawnHitParticles() {
+  /* ======================= BARRA DE VELOCIDAD (mouse) ======================= */
+  // Slider clickeable/arrastrable en el HUD que regula la velocidad de
+  // avance (0 = Normal, 1 = Turbo), reemplazando al Shift.
+  _updateSpeedSlider() {
+    const w = this.canvas.width, h = this.canvas.height;
+    const rect = this.ui.speedSliderRect(w, h);
+    const canvasRect = this._canvasRect || this.canvas.getBoundingClientRect();
+    const mx = this.input.mouseX - canvasRect.left;
+    const my = this.input.mouseY - canvasRect.top;
+    const pad = 8;
+    const overSlider = mx >= rect.x - pad && mx <= rect.x + rect.width + pad &&
+      my >= rect.y - pad && my <= rect.y + rect.height + pad;
+    if (this.input.mouseDown && (overSlider || this._draggingSlider)) {
+      this._draggingSlider = true;
+      this.player.speedSlider = Util.clamp((mx - rect.x) / rect.width, 0, 1);
+    }
+    if (!this.input.mouseDown) this._draggingSlider = false;
+    this.canvas.style.cursor = (overSlider || this._draggingSlider) ? "pointer" : "default";
+  }
+
+  /* ======================= DISPAROS ======================= */
+  _spawnBullet(dir) {
+    this.bullets.push({ worldX: this.player.worldX, lane: this.player.lane, dir, life: CONFIG.bulletLifetime });
+  }
+  _updateBullets(dt) {
+    for (const b of this.bullets) {
+      b.worldX += CONFIG.bulletSpeed * b.dir * dt;
+      b.life -= dt;
+    }
+    this.bullets = this.bullets.filter(b => b.life > 0);
+  }
+
+  /* ======================= ZOMBIS DE FRENTE ======================= */
+  // Cada uno duerme en su posición de aparición hasta que el jugador se
+  // acerca lo suficiente (frontZombieActivationRange); a partir de ahí
+  // camina hacia el jugador a su propia velocidad, independiente de la del
+  // jugador (por eso "otra velocidad diferente"). Se resuelve de dos
+  // formas: un disparo hacia adelante lo elimina antes del choque, o el
+  // jugador lo esquiva cambiando de carril / saltándolo (igual que un
+  // obstáculo). Si ninguna de las dos pasa, choca y empuja a la horda.
+  _updateFrontZombies(dt) {
+    const p = this.player, sc = p.scooter, w = this.canvas.width;
+    for (const z of this.level.frontZombies) {
+      if (!z.alive) {
+        if (z.deathTimer > 0) z.deathTimer -= dt;
+        continue;
+      }
+      if (!z.activated && p.worldX >= z.worldX - CONFIG.frontZombieActivationRange) z.activated = true;
+      if (z.activated) z.worldX -= CONFIG.frontZombieSpeed * dt;
+
+      let killed = false;
+      for (const b of this.bullets) {
+        if (b.dir > 0 && b.lane === z.lane && Math.abs(b.worldX - z.worldX) < z.width / 2 + 10) {
+          b.life = 0;
+          killed = true;
+          break;
+        }
+      }
+      if (killed) {
+        z.alive = false;
+        z.deathTimer = 0.4;
+        this.horde.relieve(CONFIG.frontZombieKillRelief);
+        this._spawnHitParticles(this._worldToScreen(z.worldX, w), z.lane);
+        this.audio.playDamage();
+        this.ui.pushToast("ZOMBI ELIMINADO");
+        continue;
+      }
+
+      const dx = Math.abs(p.worldX - z.worldX);
+      if (dx < (z.width / 2 + 26) && z.lane === p.lane) {
+        const airborne = -sc.jumpOffset > CONFIG.jumpClearHeight;
+        if (!airborne) {
+          z.alive = false;
+          z.deathTimer = 0.4;
+          const hit = p.applyHit();
+          if (hit) {
+            this.camera.addShake(0.5);
+            this.audio.playDamage();
+            this.horde.approach(CONFIG.frontZombieHitPenalty);
+            this._spawnHitParticles();
+            this.ui.pushToast("¡ZOMBI DE FRENTE!");
+          }
+        }
+      }
+    }
+    this.bullets = this.bullets.filter(b => b.life > 0);
+  }
+
+  _spawnHitParticles(screenX, laneValue) {
     const h = this.canvas.height, scale = h / 540;
-    const y = this._laneY(h, this.player.laneFloat) - 8 * scale;
+    const sx = screenX !== undefined ? screenX : this.camera.playerScreenX * this.canvas.width;
+    const lv = laneValue !== undefined ? laneValue : this.player.laneFloat;
+    const y = this._laneY(h, lv) - 8 * scale;
     for (let i = 0; i < 14; i++) {
       this.hitParticles.push({
-        x: this.camera.playerScreenX * this.canvas.width,
+        x: sx,
         y,
         vx: Util.rand(-90, 140), vy: Util.rand(-160, -20),
         life: Util.rand(0.3, 0.7), maxLife: 0.7
@@ -469,6 +586,7 @@ class Game {
     this._renderParallaxLayer(ctx, w, h, LAYERS.near, 0.85, "#05070a", this._laneY(h, CONFIG.laneCount - 1) + 60 * scale);
     this._renderHorde(ctx, w, h);
     this._renderScooter(ctx, w, h);
+    this._renderBullets(ctx, w, h);
     this._renderDust(ctx);
     this._renderHitParticles(ctx);
 
@@ -602,6 +720,9 @@ class Game {
       this._drawObstacle(ctx, o, sx, this._laneY(h, o.lane), scale);
     }
 
+    // Zombis de frente
+    for (const z of lvl.frontZombies) this._drawFrontZombie(ctx, z, w, h, scale);
+
     // Ground switch
     this._drawSwitch(ctx, lvl.groundSwitch, h, w, scale, false);
     // Elevated switch
@@ -653,6 +774,47 @@ class Game {
         ctx.closePath(); ctx.fill();
         break;
     }
+  }
+
+  // Zombi individual "de frente": silueta con aura y borde cálidos (más
+  // saturados que la masa de la horda) para que se distinga con claridad
+  // incluso con poca luz ambiente — es una amenaza puntual con la que hay
+  // que decidir algo (esquivar o disparar), no puede perderse en el fondo.
+  _drawFrontZombie(ctx, z, w, h, scale) {
+    if (!z.alive && z.deathTimer <= 0) return;
+    const sx = this._worldToScreen(z.worldX, w);
+    if (sx < -80 || sx > w + 80) return;
+    const gy = this._laneY(h, z.lane);
+    const fade = z.alive ? 1 : Util.clamp(z.deathTimer / 0.4, 0, 1);
+    const t = performance.now() * 0.001;
+    ctx.save();
+    ctx.globalAlpha *= fade;
+    ctx.translate(sx, gy);
+    if (!z.alive) ctx.scale(1, 0.5 + fade * 0.5); // se aplasta un poco al caer
+
+    const bob = Math.sin(t * 6 + z.spawnX) * 2 * scale;
+    const armSwing = Math.sin(t * 8 + z.spawnX) * 4 * scale;
+
+    // aura cálida (rim light) para que resalte contra el fondo oscuro
+    const glow = ctx.createRadialGradient(0, -26 * scale, 2, 0, -26 * scale, 34 * scale);
+    glow.addColorStop(0, "rgba(255,150,70,0.4)");
+    glow.addColorStop(1, "rgba(255,150,70,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(0, -26 * scale, 34 * scale, 0, Math.PI * 2); ctx.fill();
+
+    ctx.fillStyle = "#241512";
+    ctx.strokeStyle = "rgba(255,172,102,0.9)";
+    ctx.lineWidth = 1.5;
+    // torso
+    ctx.beginPath();
+    ctx.rect(-7 * scale, -30 * scale + bob, 14 * scale, 22 * scale);
+    ctx.fill(); ctx.stroke();
+    // cabeza
+    ctx.beginPath(); ctx.arc(0, -38 * scale + bob, 8 * scale, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // brazos extendidos hacia el jugador
+    ctx.beginPath(); ctx.moveTo(-7 * scale, -24 * scale + bob); ctx.lineTo(-16 * scale, -20 * scale + bob + armSwing); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(7 * scale, -24 * scale + bob); ctx.lineTo(16 * scale, -20 * scale + bob - armSwing); ctx.stroke();
+    ctx.restore();
   }
 
   _drawSwitch(ctx, sw, h, w, scale, elevated) {
@@ -734,11 +896,21 @@ class Game {
     // claramente fuera de cámara, no quedar "pegada" cerca del jugador.
     // No importa si sale del cuadro: lo único que decide el contacto es
     // horde.distance (ver Horde.update / hordeCatchDistance).
+    // Curva de aparición: se usa prox^0.55 (en vez de la proximidad lineal)
+    // sólo para la posición/opacidad visual, para que la masa se haga
+    // notar en pantalla mucho antes — bien lejos sigue estando casi
+    // escondida, pero deja de necesitar una proximidad altísima para
+    // empezar a verse. El umbral real de contacto (Horde.update /
+    // hordeCatchDistance) sigue dependiendo sólo de la proximidad real.
+    const visProx = Math.pow(prox, 0.55);
     const farOffset = -w * 0.62;   // bien fuera de pantalla cuando la distancia es máxima
     const nearOffset = -40;        // junto a la rueda trasera cuando está por alcanzar
-    const baseX = this.camera.playerScreenX * w + Util.lerp(farOffset, nearOffset, prox);
-    const spread = Util.lerp(50, 300, prox);
-    const visibility = Util.clamp(prox * 1.35, 0.04, 1); // casi invisible cuando está lejos
+    const baseX = this.camera.playerScreenX * w + Util.lerp(farOffset, nearOffset, visProx);
+    const spread = Util.lerp(50, 300, visProx);
+    // Piso de visibilidad más alto que antes (0.16 en vez de 0.04): la masa
+    // sigue leyéndose casi invisible bien lejos, pero deja de desaparecer
+    // por completo apenas se acerca un poco.
+    const visibility = Util.clamp(visProx * 1.35, 0.16, 1);
     ctx.save();
     for (const s of this.horde.silhouettes) {
       const px = baseX - (s.ox % spread);
@@ -746,11 +918,15 @@ class Game {
       const bob = Math.sin(performance.now() * 0.003 * s.speed + s.phase) * 3;
       const scaleS = s.scale * (0.7 + prox * 0.6);
       const py = Util.lerp(topY, bottomY, s.oy / 30) + bob;
-      // Tono ligeramente cálido/rojizo (vs. el negro-azulado del entorno)
-      // para que la horda se lea como amenaza y no se camufle contra el paisaje.
-      ctx.fillStyle = `rgba(${18 + prox * 22},${6 + prox * 4},${6 + prox * 4},${(0.6 + prox * 0.4) * visibility})`;
-      ctx.beginPath(); ctx.arc(px, py - 26 * scaleS, 7 * scaleS, 0, Math.PI * 2); ctx.fill();
+      // Tono cálido/rojizo bien saturado (vs. el negro-azulado del entorno)
+      // para que la horda se lea con claridad como amenaza y no se camufle
+      // ni se pierda contra un escenario oscuro.
+      ctx.fillStyle = `rgba(${70 + prox * 140},${26 + prox * 55},${18 + prox * 35},${(0.65 + prox * 0.35) * visibility})`;
+      ctx.strokeStyle = `rgba(255,190,130,${0.55 * visibility})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(px, py - 26 * scaleS, 7 * scaleS, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
       ctx.fillRect(px - 6 * scaleS, py - 20 * scaleS, 12 * scaleS, 22 * scaleS);
+      ctx.strokeRect(px - 6 * scaleS, py - 20 * scaleS, 12 * scaleS, 22 * scaleS);
       const armSwing = Math.sin(performance.now() * 0.006 * s.speed + s.armPhase) * 10 * scaleS;
       ctx.fillRect(px - 6 * scaleS - 8, py - 16 * scaleS + armSwing, 8, 3 * scaleS);
       ctx.fillRect(px + 6 * scaleS, py - 16 * scaleS - armSwing, 8, 3 * scaleS);
@@ -848,6 +1024,19 @@ class Game {
       ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -r * 0.85); ctx.stroke();
     }
     ctx.restore();
+  }
+
+  _renderBullets(ctx, w, h) {
+    const scale = h / 540;
+    for (const b of this.bullets) {
+      const sx = this._worldToScreen(b.worldX, w);
+      if (sx < -40 || sx > w + 40) continue;
+      const gy = this._laneY(h, b.lane);
+      const alpha = Util.clamp(b.life / CONFIG.bulletLifetime, 0, 1);
+      const len = 14 * scale;
+      ctx.fillStyle = b.dir > 0 ? `rgba(255,214,140,${alpha})` : `rgba(255,120,90,${alpha})`;
+      ctx.fillRect(b.dir > 0 ? sx : sx - len, gy - 3 * scale, len, 3 * scale);
+    }
   }
 
   _renderDust(ctx) {

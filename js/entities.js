@@ -46,6 +46,29 @@ class Obstacle extends Entity {
 }
 
 /* =========================================================================
+   FrontZombie - zombi individual que aparece de frente, atado a un carril.
+   Empieza quieto en su posición de aparición y sólo camina hacia el
+   jugador (worldX decreciente) una vez que éste entra en rango de
+   activación; se esquiva cambiando de carril / saltando, o se elimina con
+   un disparo hacia adelante.
+   ========================================================================= */
+class FrontZombie extends Entity {
+  constructor(worldX, lane) {
+    super(worldX, 30, 50, lane);
+    this.spawnX = worldX;
+    this.alive = true;
+    this.activated = false;
+    this.deathTimer = 0; // breve fade al morir, antes de dejar de dibujarse
+  }
+  reset() {
+    this.worldX = this.spawnX;
+    this.alive = true;
+    this.activated = false;
+    this.deathTimer = 0;
+  }
+}
+
+/* =========================================================================
    Ramp
    ========================================================================= */
 class Ramp extends Entity {
